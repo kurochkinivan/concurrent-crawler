@@ -14,7 +14,6 @@ import (
 type Mirror struct {
 	baseURL     *url.URL
 	workerCount int
-	tokens      chan struct{}
 }
 
 func NewMirror(baseURL string, workerCount int) (*Mirror, error) {
@@ -26,7 +25,6 @@ func NewMirror(baseURL string, workerCount int) (*Mirror, error) {
 	return &Mirror{
 		baseURL:     parsedURL,
 		workerCount: workerCount,
-		tokens:      make(chan struct{}, workerCount),
 	}, nil
 }
 
@@ -72,15 +70,11 @@ func (m *Mirror) Start() error {
 
 func (m *Mirror) worker(urlChan <-chan string, errChan chan<- error) {
 	for url := range urlChan {
-		m.tokens <- struct{}{}
-
 		err := m.processSinglePage(url)
 		if err != nil {
 			errChan <- err
 			continue
 		}
-
-		<-m.tokens
 	}
 }
 
