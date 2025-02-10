@@ -31,6 +31,9 @@ func NewMirror(baseURL string, workerCount int) (*Mirror, error) {
 }
 
 func (m *Mirror) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	hostname := m.baseURL.Hostname()
 	err := fsm.InitializeDirectory(hostname)
 	if err != nil {
@@ -71,11 +74,9 @@ func (m *Mirror) Start(ctx context.Context) error {
 				return err
 			}
 		case <-doneChan:
-			ctx.Done()
 			return nil
 		case <-abortChan:
 			fmt.Println("stopped due to interruption")
-			ctx.Done()
 			return nil
 		}
 	}
@@ -83,6 +84,12 @@ func (m *Mirror) Start(ctx context.Context) error {
 
 func (m *Mirror) worker(ctx context.Context, urlChan <-chan string, errChan chan<- error) {
 	for url := range urlChan {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		err := m.processSinglePage(ctx, url)
 		if err != nil {
 			errChan <- err
