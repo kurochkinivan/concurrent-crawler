@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -35,7 +36,7 @@ func runMirror(website string, workerCount int) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = m.Start()
+	err = m.Start(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}

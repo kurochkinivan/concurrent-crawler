@@ -1,9 +1,11 @@
 package mirror
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -28,7 +30,7 @@ func NewMirror(baseURL string, workerCount int) (*Mirror, error) {
 	}, nil
 }
 
-func (m *Mirror) Start() error {
+func (m *Mirror) Start(ctx context.Context) error {
 	hostname := m.baseURL.Hostname()
 	err := fsm.InitializeDirectory(hostname)
 	if err != nil {
@@ -38,13 +40,14 @@ func (m *Mirror) Start() error {
 	urlChan := make(chan string, m.workerCount)
 	errChan := make(chan error, m.workerCount)
 	doneChan := make(chan struct{})
+	abortChan := make(chan struct{})
 
 	var wg sync.WaitGroup
 	for i := 0; i < m.workerCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			m.worker(urlChan, errChan)
+			m.worker(ctx, urlChan, errChan)
 		}()
 	}
 
@@ -56,6 +59,11 @@ func (m *Mirror) Start() error {
 		doneChan <- struct{}{}
 	}()
 
+	go func() {
+		os.Stdin.Read(make([]byte, 1))
+		abortChan <- struct{}{}
+	}()
+
 	for {
 		select {
 		case err := <-errChan:
@@ -63,14 +71,19 @@ func (m *Mirror) Start() error {
 				return err
 			}
 		case <-doneChan:
+			ctx.Done()
+			return nil
+		case <-abortChan:
+			fmt.Println("stopped due to interruption")
+			ctx.Done()
 			return nil
 		}
 	}
 }
 
-func (m *Mirror) worker(urlChan <-chan string, errChan chan<- error) {
+func (m *Mirror) worker(ctx context.Context, urlChan <-chan string, errChan chan<- error) {
 	for url := range urlChan {
-		err := m.processSinglePage(url)
+		err := m.processSinglePage(ctx, url)
 		if err != nil {
 			errChan <- err
 			continue
@@ -78,16 +91,22 @@ func (m *Mirror) worker(urlChan <-chan string, errChan chan<- error) {
 	}
 }
 
-func (m *Mirror) processSinglePage(link string) error {
+func (m *Mirror) processSinglePage(ctx context.Context, link string) error {
 	parsedURL, err := url.Parse(link)
 	if err != nil {
 		return fmt.Errorf("failed to parse URL %s, err: %w", link, err)
 	}
 
-	resp, err := http.Get(link)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request for url %s, err: %w", link, err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to get html page for url %s, err: %w", link, err)
 	}
+	defer resp.Body.Close()
 
 	hostname := m.baseURL.Hostname()
 	path := filepath.Join(hostname, parsedURL.Path)
